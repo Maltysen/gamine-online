@@ -1,0 +1,272 @@
+<title>Gamine Online</title>
+
+<meta name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<link rel="icon" type="image/png" href="gamine.png"/>
+
+<link rel="preload" href="VeraBd.ttf" as="font" crossorigin="anonymous">
+
+<style>
+    @font-face {
+        font-family: MyBitstreamVera;
+        src: url(VeraBd.ttf);
+        font-display: swap;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+    }
+
+    #game_screen {
+        /*cursor: url('pencil.png') 0 65, auto;*/
+        cursor: none;
+    }
+</style>
+
+<h1 style="text-align: center; margin-top: 20%;" id="prescreen">
+    <button id="gamine_starter" style="font-size: 100pt; cursor: pointer;">
+        <img src="gamine.png" style="display: inline; height: 75pt; margin-right: 10px; padding-right: 0;">Start Gamine
+    </button>
+</h1>
+
+<div id="game_screen" style="margin:0; padding:0; display:none;">
+    <canvas id="canvas" style="margin: 0; padding: 0;"></canvas>
+    <img src="pencil.png" id="pencil" style="display: block; position: absolute; margin: 0; padding: 0; pointer-events: none;">
+</div>
+
+<audio src="sounds/BachJSBrandenburgConcertNo2inFMajorBWV1047mvmt1.ogg" loop id="bg_audio">
+</audio>
+
+<script>
+    let canvas = document.getElementById('canvas');
+    let gamine_starter = document.getElementById("gamine_starter");
+    let pencil = document.getElementById("pencil");
+
+    function request_gamine_start() {
+        gamine_starter.disabled = true;
+
+        document.getElementById("game_screen").style.display = "initial";
+        document.getElementById("prescreen").style.display = "none";
+
+        document.getElementById("game_screen")
+            .requestFullscreen({navigationUI: "hide"}).then(()=>{
+                canvas.width  = window.innerWidth;
+                canvas.height = window.innerHeight;
+
+                start_gamine();
+            });
+    }
+    gamine_starter.onclick = request_gamine_start;
+
+    function start_gamine() {
+        let ctx = canvas.getContext('2d');
+
+        function getHex(r, g, b) {
+            return "#"
+            + Math.floor(r*256).toString(16).padStart(2, '0')
+            + Math.floor(g*256).toString(16).padStart(2, '0')
+            + Math.floor(b*256).toString(16).padStart(2, '0');
+        }
+
+        function random_line_color() {
+            let red = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+            let green = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+            let blue = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+            return getHex(red, green, blue);
+        }
+
+        function random_obj_color() {
+            let red = Math.floor(Math.random() * 10) * 0.1;
+            let green = Math.floor(Math.random() * 10) * 0.1;
+            let blue = Math.floor(Math.random() * 10) * 0.1;
+            return getHex(red, green, blue);
+        }
+
+        const sounds_list = ["bonus.wav", "crash.wav", "eat.wav", "flip.wav",
+            "level.wav", "plick.ogg", "tri.ogg", "brick.wav", "darken.wav",
+            "eraser1.wav", "gobble.wav", "line_end.wav", "prompt.wav", "tuxok.wav",
+            "bleep.wav", "bubble.wav", "drip.wav", "eraser2.wav", "grow.wav",
+            "paint1.wav", "receive.wav", "youcannot.wav"];
+
+        function play_random_sound() {
+            let snd = sounds_list[Math.floor(Math.random()*sounds_list.length)];
+            let audio = new Audio("sounds/"+snd);
+            audio.play();
+        }
+
+        let xold=-1, yold=-1;
+        let gmx=-1, gmy=-1;
+        let lastkeyval=0;
+        let last_color_change = Date.now();
+        let linecolor = random_line_color();
+        let bgplaying = false;
+        
+        let cbcolor = "black", objcolor;
+
+        let obj_x, obj_y, num_spokes, obj_str, obj_active=false;
+
+        function reset_display() {
+            // Each computer seems to have a different fixed 
+            // background that doesn't show up in the code.
+            // This is the one from mine, cuz I'm making 
+            // that one the standard for everything.
+            ctx.fillStyle = "#23252e";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = "black";
+            ctx.font = "bold 15pt MyBitstreamVera";
+            ctx.fillText("Quit: esc | Clear: space | Save: printscr", 0, canvas.height - 5);
+        }
+
+        function render_star() {
+            ctx.beginPath();
+            ctx.fillStyle = cbcolor;
+
+            let x, y;
+
+            for (let i=0; i<num_spokes+1; ++i) {
+                x = obj_x + Math.cos((i*2) * Math.PI/num_spokes) * 15;
+                y = obj_y + Math.sin((i*2) * Math.PI/num_spokes) * 15;
+
+                if (!i) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+
+                x = obj_x + Math.cos((i*2+1) * Math.PI/num_spokes) * 20;
+                y = obj_y + Math.sin((i*2+1) * Math.PI/num_spokes) * 20;
+
+                ctx.lineTo(x, y);
+            }
+            
+            ctx.fill();
+            ctx.closePath();
+        }
+
+        function render_string() {
+            ctx.font = "bold 50px MyBitstreamVera";
+            ctx.fillStyle = cbcolor;
+            ctx.fillText(obj_str, obj_x - 15, obj_y + 15);
+        }
+
+        function on_keydown(e) {
+            if (e.keyCode==32) { //SPACE
+                reset_display();
+            // TODO: print
+            } else if (e.keyCode==27) {
+                window.close();
+            } else {
+                play_random_sound();
+
+                let s = e.key;
+                if (s==="Tab" || s==="Backspace" || s==="Delete" || s==="Enter")
+                    s = '\u0000';
+                // 3 means numpad
+                if (s.length===1 && !(s==='\u0000' && e.location===3)) {
+                    obj_str = s;
+                    obj_x = gmx;
+                    obj_y = gmy;
+                    objcolor = cbcolor;
+                    cbcolor = random_obj_color();
+                    obj_active = true;
+                    
+                    render_string();
+                
+                }
+            }
+
+            e.preventDefault();
+            return false;
+        }
+
+        function upd_mouse(e) {
+            console.log(e);
+            pencil.style.left = e.clientX;
+            pencil.style.top = e.clientY - 65;
+        }
+
+
+        function on_mousedown(e) {
+            // we draw a star
+            num_spokes = Math.floor(Math.random() * 6) + 2;
+            obj_x = e.offsetX;
+            obj_y = e.offsetY;
+            play_random_sound();
+            cbcolor = random_obj_color();
+            objcolor = cbcolor;
+            obj_str = "none";
+            obj_active= true;
+            
+            render_star();
+        }
+
+        function on_mousemove(e) {
+            let mx = e.offsetX;
+            let my = e.offsetY;
+            gmx = mx;
+            gmy = my;
+
+            let cur_time = Date.now();
+            let elapsed_ms = cur_time - last_color_change;
+
+            if (elapsed_ms > 100) {
+                last_color_change = cur_time;
+                linecolor = random_line_color();
+            }
+
+            if (obj_active) {
+                let width = 10 + 15;
+                if (obj_x - width > xold ||
+                    obj_x + width < xold ||
+                    obj_y - width > yold ||
+                    obj_y + width < yold)
+                        obj_active = false;
+
+                let temp_color = cbcolor;
+                cbcolor = objcolor;
+                if (obj_str === "none") render_star();
+                else render_string();
+                cbcolor = temp_color;
+            }
+
+            if (xold!==-1 && yold!==-1) {
+                ctx.beginPath();
+                ctx.strokeStyle = linecolor;
+                ctx.lineWidth = 10;
+                ctx.lineCap = 'round';
+                ctx.moveTo(xold, yold);
+                ctx.lineTo(mx, my);
+                ctx.stroke();
+                ctx.closePath();
+            }
+            xold = mx;
+            yold = my;
+        }
+
+        function check_stop_gamine(e) {
+            if (document.fullscreenElement === null) {
+                gamine_starter.disabled = false;
+                document.getElementById("bg_audio").pause();
+                document.getElementById("bg_audio").currentTime = 0;
+
+                document.getElementById("game_screen").style.display = "none";
+                document.getElementById("prescreen").style.display = "revert";
+
+                window.removeEventListener("keydown", on_keydown);
+                canvas.removeEventListener("mousedown", on_mousedown);
+                canvas.removeEventListener('mousemove', on_mousemove);
+                document.getElementById("game_screen").removeEventListener('mousemove', on_mousemove);
+                document.removeEventListener('fullscreenchange', check_stop_gamine);
+            }
+        }
+
+        window.addEventListener("keydown", on_keydown);
+        canvas.addEventListener("mousedown", on_mousedown);
+        canvas.addEventListener('mousemove', on_mousemove);
+        document.getElementById("game_screen").addEventListener('mousemove', upd_mouse);
+        document.addEventListener('fullscreenchange', check_stop_gamine);
+
+        reset_display();
+        document.getElementById("bg_audio").play();
+    }
+</script>
