@@ -23,6 +23,16 @@
         /*cursor: url('pencil.png') 0 65, auto;*/
         cursor: none;
     }
+
+    .noselect {
+      -webkit-touch-callout: none; /* iOS Safari */
+        -webkit-user-select: none; /* Safari */
+         -khtml-user-select: none; /* Konqueror HTML */
+           -moz-user-select: none; /* Old versions of Firefox */
+            -ms-user-select: none; /* Internet Explorer/Edge */
+                user-select: none; /* Non-prefixed version, currently
+                                      supported by Chrome, Edge, Opera and Firefox */
+    }
 </style>
 
 <h1 style="text-align: center; margin-top: 20%;" id="prescreen">
@@ -31,7 +41,7 @@
     </button>
 </h1>
 
-<div id="game_screen" style="margin:0; padding:0; display:none;">
+<div id="game_screen" style="margin:0; padding:0; display:none;" class="noselect" oncontextmenu="return false;">
     <canvas id="canvas" style="margin: 0; padding: 0;"></canvas>
     <img src="pencil.png" id="pencil" style="display: block; position: absolute; margin: 0; padding: 0; pointer-events: none;">
 </div>
