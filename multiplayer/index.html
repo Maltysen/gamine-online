@@ -1,0 +1,544 @@
+<title>Gamine Online</title>
+
+<meta name="viewport"
+    content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<link rel="icon" type="image/png" href="gamine.png"/>
+
+<link rel="preload" href="VeraBd.ttf" as="font" crossorigin="anonymous">
+
+<style>
+    @font-face {
+        font-family: MyBitstreamVera;
+        src: url(VeraBd.ttf);
+        font-display: swap;
+    }
+
+    body {
+        margin: 0;
+        padding: 0;
+    }
+
+    #game_screen {
+        /*cursor: url('pencil.png') 0 65, auto;*/
+        cursor: none;
+    }
+
+    .noselect {
+      -webkit-touch-callout: none; /* iOS Safari */
+        -webkit-user-select: none; /* Safari */
+         -khtml-user-select: none; /* Konqueror HTML */
+           -moz-user-select: none; /* Old versions of Firefox */
+            -ms-user-select: none; /* Internet Explorer/Edge */
+                user-select: none; /* Non-prefixed version, currently
+                                      supported by Chrome, Edge, Opera and Firefox */
+    }
+
+    #room_id {
+        margin: 0;
+        font-size: 48pt;
+        display: block;
+        flex-grow: 1;
+        min-width: 0;
+        width: 0;
+        padding: 10px;
+    }
+
+</style>
+
+<div id="prescreen" style="text-align: center;">
+    <form id="gamine_starter">
+        <h1 style="text-align: center; margin: 0 auto; margin-top: 10%; text-align: center; display:inline-block;">
+            <div style="width: 100%;">
+                <label for="room_id" style="font-family: sans; float: left; font-size: 48pt;">Room ID: </label>
+                <button type="button" style="float: right; margin-bottom: 10px;" title="randomize room id" onclick="random_room_id()">
+                    <img src="dice.png" style="width: 100px;">
+                </button>
+            </div>
+            <div style="width: 100%; display: flex;">
+                <input required id="room_id" minlength="4" maxlength="15" pattern="[0-9a-zA-Z_\-]{4,15}" oninput="this.value = this.value.replace(/[^0-9a-zA-Z_\-]/g, '');" title="At least 4 and at most 15 characters (alphanumeric, '-', and '_').">
+                <button type="button" onclick="copy_room_id()">
+                    <img src="copy.png" style="width: 50px;">
+                </button>
+            </div>
+            <br>
+            <button type="submit" style="font-size: 100pt; cursor: pointer;" id="gamine_start_button">
+                <img src="gamine.png" style="display: inline; height: 75pt; margin-right: 10px; padding-right: 0;">Start Gamine
+            </button>
+        </h1>
+    </form>
+</div>
+
+<div id="game_screen" style="margin:0; padding:0; display:none;" class="noselect" oncontextmenu="return false;">
+    <canvas id="canvas" style="margin: 0; padding: 0;"></canvas>
+    <img src="pencil.png" id="pencil" style="display: block; position: absolute; margin: 0; padding: 0; pointer-events: none;">
+</div>
+
+<audio src="sounds/BachJSBrandenburgConcertNo2inFMajorBWV1047mvmt1.ogg" loop id="bg_audio">
+</audio>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+    function uuid4() {
+      return ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+        (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+      );
+    }
+
+    let room_id_inp = document.getElementById("room_id");
+    function random_room_id() {
+       room_id_inp.value = uuid4().slice(9, 23);
+    }
+
+    function copy_room_id() {
+        room_id_inp.focus();
+        room_id_inp.select();
+        document.execCommand('copy');
+    }
+
+    class DrawEvent {
+        ev_type;
+        ev_id;
+        cl_ts;
+
+        constructor(ev_type) {
+            this.ev_type = ev_type;
+            this.touch();
+            this.ev_id = client_id + ";" + event_cnt;
+            event_cnt++;
+        }
+
+        touch() {
+            this.cl_ts = (new Date()).getTime();
+        }
+
+        // abstract method
+        execute(ctx) {}
+
+        static from_json(s) {
+            let o = JSON.parse(s);
+
+            let cls = {
+                "star": StarEvent,
+                "text": TextEvent,
+                "reset": ResetEvent,
+                "line": LineEvent,
+            }[o.ev_type];
+            if (!cls)
+                throw "don't know event type of "+o.ev_type;
+
+            return Object.create(cls.prototype, Object.getOwnPropertyDescriptors(o))
+        }
+    }
+
+    class ResetEvent extends DrawEvent {
+        constructor() {
+            super("reset");
+        }
+
+        execute(ctx) {
+            // Each computer seems to have a different fixed 
+            // background that doesn't show up in the code.
+            // This is the one from mine, cuz I'm making 
+            // that one the standard for everything.
+            ctx.fillStyle = "#23252e";
+            ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            
+            ctx.fillStyle = "black";
+            ctx.font = "bold 15pt MyBitstreamVera";
+            ctx.fillText("Quit: esc | Clear: space | Save: printscr", 0, ctx.canvas.height - 5);
+        }
+    }
+
+    class StarEvent extends DrawEvent {
+        x;
+        y;
+        num_spokes;
+        color;
+
+        constructor(x, y, num_spokes, color) {
+            super("star");
+            this.x = x;
+            this.y = y;
+            this.num_spokes = num_spokes;
+            this.color = color;
+        }
+
+        execute(ctx) {
+            ctx.beginPath();
+            ctx.fillStyle = this.color;
+
+            let x, y;
+
+            for (let i=0; i<this.num_spokes+1; ++i) {
+                x = this.x + Math.cos((i*2) * Math.PI/this.num_spokes) * 15;
+                y = this.y + Math.sin((i*2) * Math.PI/this.num_spokes) * 15;
+
+                if (!i) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+
+                x = this.x + Math.cos((i*2+1) * Math.PI/this.num_spokes) * 20;
+                y = this.y + Math.sin((i*2+1) * Math.PI/this.num_spokes) * 20;
+
+                ctx.lineTo(x, y);
+            }
+            
+            ctx.fill();
+            ctx.closePath();
+        }
+    }
+
+    class TextEvent extends DrawEvent {
+        x;
+        y;
+        str;
+        color;
+
+        constructor(x, y, str, color) {
+            super("text");
+            this.x = x;
+            this.y = y;
+            this.str = str;
+            this.color = color;
+        }
+
+        execute(ctx) {
+            ctx.font = "bold 50px MyBitstreamVera";
+            ctx.fillStyle = this.color;
+            ctx.fillText(this.str, this.x - 15, this.y + 15);
+        }
+    }
+    
+    class LineEvent extends DrawEvent {
+        x1;
+        y1;
+        x2;
+        y2;
+        color;
+
+        constructor(x1, y1, x2, y2, color) {
+            super("line");
+            this.x1 = x1;
+            this.y1 = y1;
+            this.x2 = x2;
+            this.y2 = y2;
+            this.color = color;
+        }
+
+        execute(ctx) {
+            ctx.beginPath();
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 10;
+            ctx.lineCap = 'round';
+            ctx.moveTo(this.x1, this.y1);
+            ctx.lineTo(this.x2, this.y2);
+            ctx.stroke();
+            ctx.closePath();
+        }
+    }
+
+    let display_canvas = document.getElementById('canvas');
+    let gamine_starter = document.getElementById("gamine_starter");
+    let pencil = document.getElementById("pencil");
+
+    let socket = io();
+    let client_id;
+    let event_cnt;
+    let event_list;
+    let local_only;
+
+    function getHex(r, g, b) {
+        return "#"
+        + Math.floor(r*256).toString(16).padStart(2, '0')
+        + Math.floor(g*256).toString(16).padStart(2, '0')
+        + Math.floor(b*256).toString(16).padStart(2, '0');
+    }
+
+    function random_line_color() {
+        let red = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+        let green = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+        let blue = ((Math.floor(Math.random() * 128) + 127)/255.0+ 1.0)/2.0;
+        return getHex(red, green, blue);
+    }
+
+    function random_obj_color() {
+        let red = Math.floor(Math.random() * 10) * 0.1;
+        let green = Math.floor(Math.random() * 10) * 0.1;
+        let blue = Math.floor(Math.random() * 10) * 0.1;
+        return getHex(red, green, blue);
+    }
+
+    const sounds_list = ["bonus.wav", "crash.wav", "eat.wav", "flip.wav",
+        "level.wav", "plick.ogg", "tri.ogg", "brick.wav", "darken.wav",
+        "eraser1.wav", "gobble.wav", "line_end.wav", "prompt.wav", "tuxok.wav",
+        "bleep.wav", "bubble.wav", "drip.wav", "eraser2.wav", "grow.wav",
+        "paint1.wav", "receive.wav", "youcannot.wav"];
+
+    function play_actual_sound(idx) {
+        let snd = sounds_list[idx];
+        let audio = new Audio("sounds/"+snd);
+        audio.play();
+    }
+
+    socket.on("connect", () => {
+        document.getElementById("gamine_start_button").disabled = false; 
+    });
+
+    socket.on("disconnect", (reason) => {
+        document.getElementById("gamine_start_button").disabled = true; 
+        document.exitFullscreen();
+    });
+
+    socket.on("joined_room", (cid, ev_list) => {
+        console.log(11111111111111);
+        client_id = cid;
+        event_list = ev_list.map(s => {
+            let e = DrawEvent.from_json(s);
+            e.nonlocal = true;
+            return e;
+        });
+        local_only = [];
+        event_cnt = 0;
+
+        document.getElementById("game_screen").style.display = "initial";
+        document.getElementById("game_screen")
+            .requestFullscreen({navigationUI: "hide"}).then(()=>{
+                display_canvas.width  = window.innerWidth;
+                display_canvas.height = window.innerHeight;
+
+                start_gamine();
+            });
+    });
+
+    socket.on("draw_event", (e) => {
+        e = DrawEvent.from_json(e);
+
+        for (let i=0; i<local_only.length; ++i) {
+            if (local_only[i].ev_id === e.ev_id) {
+                local_only.splice(i, 1);
+                break;
+            }
+        }
+        e.touch();
+        e.nonlocal = true;
+        event_list.push(e);
+    });
+
+    socket.on("sound_event", (idx) => {
+        play_actual_sound(idx);
+    });
+
+
+    function request_gamine_start() {
+        gamine_starter.disabled = true;
+
+        document.getElementById("prescreen").style.display = "none";
+        
+        socket.emit("join_room", room_id_inp.value);
+        return false;
+
+    }
+    gamine_starter.onsubmit = request_gamine_start;
+
+    function start_gamine() {
+        let draw_canvas = document.createElement('canvas');
+        let stable_canvas = document.createElement('canvas');
+
+        draw_canvas.width  = window.innerWidth;
+        draw_canvas.height = window.innerHeight;
+        stable_canvas.width  = window.innerWidth;
+        stable_canvas.height = window.innerHeight;
+
+        let display_ctx = display_canvas.getContext('2d');
+        let draw_ctx = draw_canvas.getContext('2d');
+        let stable_ctx = stable_canvas.getContext('2d');
+
+        function play_random_sound() {
+            let idx = Math.floor(Math.random()*sounds_list.length);
+            socket.emit("sound_event", idx);
+            play_actual_sound(idx);
+        }
+
+        let xold=-1, yold=-1;
+        let gmx=-1, gmy=-1;
+        let lastkeyval=0;
+        let last_color_change = Date.now();
+        let linecolor = random_line_color();
+        let bgplaying = false;
+        
+        let cbcolor = "black", objcolor;
+
+        let obj_x, obj_y, num_spokes, obj_str, obj_active=false;
+
+        function send_draw_event(ev) {
+            socket.emit("draw_event", JSON.stringify(ev));
+            local_only.push(ev);
+        }
+
+        function create_star_event() {
+            send_draw_event(new StarEvent(obj_x, obj_y, num_spokes, cbcolor));
+        }
+
+        function create_text_event() {
+            send_draw_event(new TextEvent(obj_x, obj_y, obj_str, cbcolor));
+        }
+
+        function create_reset_event() {
+            send_draw_event(new ResetEvent());
+        }
+
+        function on_keydown(e) {
+            if (e.keyCode==32) { //SPACE
+                create_reset_event();
+            // TODO: print
+            } else if (e.keyCode==27) {
+                window.close();
+            } else {
+                play_random_sound();
+
+                let s = e.key;
+                if (s==="Tab" || s==="Backspace" || s==="Delete" || s==="Enter")
+                    s = '\u0000';
+                // 3 means numpad
+                if (s.length===1 && !(s==='\u0000' && e.location===3)) {
+                    obj_str = s;
+                    obj_x = gmx;
+                    obj_y = gmy;
+                    objcolor = cbcolor;
+                    cbcolor = random_obj_color();
+                    obj_active = true;
+                    
+                    create_text_event();
+                
+                }
+            }
+
+            e.preventDefault();
+            return false;
+        }
+
+        function upd_mouse(e) {
+            pencil.style.left = e.clientX;
+            pencil.style.top = e.clientY - 65;
+        }
+
+
+        function on_mousedown(e) {
+            // we draw a star
+            num_spokes = Math.floor(Math.random() * 6) + 2;
+            obj_x = e.offsetX;
+            obj_y = e.offsetY;
+            play_random_sound();
+            cbcolor = random_obj_color();
+            objcolor = cbcolor;
+            obj_str = "none";
+            obj_active= true;
+            
+            create_star_event();
+        }
+
+        function on_mousemove(e) {
+            let mx = e.offsetX;
+            let my = e.offsetY;
+            gmx = mx;
+            gmy = my;
+
+            let cur_time = Date.now();
+            let elapsed_ms = cur_time - last_color_change;
+
+            if (elapsed_ms > 100) {
+                last_color_change = cur_time;
+                linecolor = random_line_color();
+            }
+
+            if (obj_active) {
+                let width = 10 + 15;
+                if (obj_x - width > xold ||
+                    obj_x + width < xold ||
+                    obj_y - width > yold ||
+                    obj_y + width < yold)
+                        obj_active = false;
+
+                let temp_color = cbcolor;
+                cbcolor = objcolor;
+                if (obj_str === "none") create_star_event();
+                else create_text_event();
+                cbcolor = temp_color;
+            }
+
+            if (xold!==-1 && yold!==-1) {
+                send_draw_event(new LineEvent(xold, yold, mx, my, linecolor));
+            }
+            xold = mx;
+            yold = my;
+        }
+
+        let drawing = true;
+        function drawloop(ts) {
+            if (!drawing) return;
+
+            let merged = [];
+            let i=0, j=0;
+            while (i<event_list.length || j<local_only.length) {
+                if (j===local_only.length || (i<event_list.length && event_list[i].cl_ts <= local_only[j].cl_ts)) {
+                    merged.push(event_list[i]);
+                    ++i;
+                } else {
+                    merged.push(local_only[j]);
+                    ++j;
+                }
+            }
+
+            let seen_local = false;
+            for (let e of merged) {
+                if (!seen_local && !("nonlocal" in e)) {
+                    seen_local = true;
+                    draw_ctx.drawImage(stable_canvas, 0, 0);
+                }
+                if (seen_local) {
+                    e.execute(draw_ctx);
+                } else {
+                    e.execute(stable_ctx);
+                    event_list.splice(0, 1);
+                }
+            }
+            if (!seen_local)
+                draw_ctx.drawImage(stable_canvas, 0, 0);
+
+            display_ctx.drawImage(draw_canvas, 0, 0);
+
+            requestAnimationFrame(drawloop);
+        }
+
+        function check_stop_gamine(e) {
+            if (document.fullscreenElement === null) {
+                gamine_starter.disabled = false;
+                document.getElementById("bg_audio").pause();
+                document.getElementById("bg_audio").currentTime = 0;
+
+                document.getElementById("game_screen").style.display = "none";
+                document.getElementById("prescreen").style.display = "revert";
+
+                window.removeEventListener("keydown", on_keydown);
+                canvas.removeEventListener("mousedown", on_mousedown);
+                canvas.removeEventListener('mousemove', on_mousemove);
+                document.getElementById("game_screen").removeEventListener('mousemove', on_mousemove);
+                drawing = false;
+                document.removeEventListener('fullscreenchange', check_stop_gamine);
+
+                socket.emit("leave_room");
+            }
+        }
+
+        window.addEventListener("keydown", on_keydown);
+        canvas.addEventListener("mousedown", on_mousedown);
+        canvas.addEventListener('mousemove', on_mousemove);
+        document.getElementById("game_screen").addEventListener('mousemove', upd_mouse);
+        document.addEventListener('fullscreenchange', check_stop_gamine);
+
+        if (event_list.length===0) create_reset_event();
+        document.getElementById("bg_audio").play();
+        drawloop();
+    }
+</script>
